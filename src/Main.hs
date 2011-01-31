@@ -1,6 +1,9 @@
+module Main where
+
 import ArgumentParser
 import Control.Monad
-import Data.Foldable (foldlM)
+import Data.Foldable (foldlM, foldrM)
+import Data.List (foldl')
 import Network.AWS.S3Bucket
 import Network.AWS.S3Object
 import System.Directory
@@ -10,29 +13,36 @@ import System.Posix.Files
 import Types
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BL
+import qualified Data.Map as M
+
+debug env st = when (verboseMode env) (putStrLn st)
 
 getNewActions env = do
+  debug env " = Getting remote listing..."
   realRemoteDirs <- filterM (doesDirectoryExist) (localPaths env) 
                     >>= return . map (\x-> if (last x == '/')
                                              then (remotePath env)
                                              else (remotePath env </> takeBaseName x))
   remoteFileList <- concat `fmap` mapM getS3Files realRemoteDirs 
-  expanded <- foldM expandAll [] (localPaths env)
-  updates  <- foldlM (getNewActions' remoteFileList) [] expanded
+  debug env " = Examining local filesystem..."
+  expanded <- concat `fmap` foldrM expandAll [] (localPaths env)
+  debug env " = Calculating updates..."
+  updates  <- foldrM (getNewActions' (makeMap remoteFileList)) [] expanded
+  debug env " = Calculating deletions..."
   deletions  <- if (deleteMode env) 
                   then findDeletions expanded remoteFileList 
                   else return ([] :: [Action])
   return (updates ++ deletions)
   where
+    makeMap = foldl' (\a b -> M.insert (key b) b a) M.empty 
     expand path = do
       isFile <- isFile path
       case isFile of
-        True -> return [path]
+        True  -> return [path]
         False -> expandDirectory path
         
     expandDirectory path = do
-      find (return (recursiveMode env))  (return True) path >>= filterM isFile
-        
+      find (return (recursiveMode env)) (fileType ==? RegularFile) path 
       
     isFile path = do
       doesFileExist path
@@ -44,7 +54,7 @@ getNewActions env = do
                  (ListRequest path "" "" 1)
       return x
       
-    expandAll accum path = do
+    expandAll path accum = do
       let newDir = if last path == '/' then "" else takeBaseName path
       fileList <- expand path
       remoteNames <- forM fileList (\x -> do 
@@ -52,16 +62,14 @@ getNewActions env = do
                                        if (isFile) 
                                          then return ((remotePath env) </> takeFileName x)
                                          else return ((remotePath env) </> newDir </> makeRelative path x)) 
-      return (accum ++ zip fileList remoteNames)
+      return ((zip fileList remoteNames) : accum)
 
 
-    getNewActions' s3fs alist x = do
+    getNewActions' s3fs x alist = do
       diffs <- findChanges s3fs x
-      return (alist ++ [diffs])
+      return (diffs : alist)
 
-    findInRemoteList _ []      = Nothing
-    findInRemoteList lf (x:xs) = 
-      if (key x) == lf then Just x else findInRemoteList lf xs
+    findInRemoteList lf rl = M.lookup lf rl
 
     inLocalList [] _ = False
     inLocalList ((_,rn):xs) s3f | rn == (key s3f) = True
@@ -123,11 +131,11 @@ skips _ = False
 
 main = do
   env <- parseArgs 
-  putStrLn "Calculating uploads..."
+  debug env " = Calculating actions..."
   new <- getNewActions env >>= return . filter (not . skips)
   case new of
     [] -> putStrLn " + No new changes."
     _  -> do
-      mapM (runAction env) new 
+      mapM_ (runAction env) new
       return ()
   putStrLn "Finished."

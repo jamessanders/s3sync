@@ -16,12 +16,15 @@ Executable s3sync
   hs-source-dirs: src
   Build-depends: base >= 4, 
                  bytestring >= 0.9.1.5, 
+                 hxt <= 8.5.4,
                  hS3 >= 0.5.3, 
                  unix >= 2.4.0.0, 
                  filemanip >= 0.3.5.1, 
                  filepath >= 1.1.0.3,
                  directory >= 1.0.1.0,
-                 mtl >= 1.1.0.2               
-  ghc-options: -O2 
+                 mtl >= 1.1.0.2,
+                 containers >= 0.3.0.0
+
+  ghc-options: -O2 -threaded
 
     
