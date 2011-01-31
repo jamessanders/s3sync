@@ -17,7 +17,7 @@ import qualified Data.Map as M
 
 debug env st = when (verboseMode env) (putStrLn st)
 
-getNewActions env = do
+runNewActions env = do
   debug env " = Getting remote listing..."
   realRemoteDirs <- filterM (doesDirectoryExist) (localPaths env) 
                     >>= return . map (\x-> if (last x == '/')
@@ -26,13 +26,15 @@ getNewActions env = do
   remoteFileList <- concat `fmap` mapM getS3Files realRemoteDirs 
   debug env " = Examining local filesystem..."
   expanded <- concat `fmap` foldrM expandAll [] (localPaths env)
-  debug env " = Calculating updates..."
-  updates  <- foldrM (getNewActions' (makeMap remoteFileList)) [] expanded
-  debug env " = Calculating deletions..."
-  deletions  <- if (deleteMode env) 
-                  then findDeletions expanded remoteFileList 
-                  else return ([] :: [Action])
-  return (updates ++ deletions)
+  
+  when (deleteMode env) $ do
+    debug env " = Performing deletions..."
+    runDeletions expanded remoteFileList
+
+  debug env " = Running updates..."
+  mapM_ (runNewUploads (makeMap remoteFileList)) expanded
+  return ()
+  
   where
     makeMap = foldl' (\a b -> M.insert (key b) b a) M.empty 
     expand path = do
@@ -65,9 +67,8 @@ getNewActions env = do
       return ((zip fileList remoteNames) : accum)
 
 
-    getNewActions' s3fs x alist = do
-      diffs <- findChanges s3fs x
-      return (diffs : alist)
+    runNewUploads s3fs x = do
+      findChanges s3fs x >>= runAction 
 
     findInRemoteList lf rl = M.lookup lf rl
 
@@ -75,7 +76,8 @@ getNewActions env = do
     inLocalList ((_,rn):xs) s3f | rn == (key s3f) = True
                                 | otherwise = inLocalList xs s3f
 
-    findDeletions fl = return . map (makeRemoteDeletion . key) . filter (not . inLocalList fl) 
+    runDeletions fl = do
+      mapM_ (runAction . makeRemoteDeletion . key) . filter (not . inLocalList fl) 
                                         
     findChanges rfs (lf, rf) = do
       case (rf `findInRemoteList` rfs) of
@@ -105,7 +107,6 @@ getNewActions env = do
       obj_headers  = [],
       obj_data     = BL.empty
       }
-                     
       
     compareMetaData lf s3f = do
       fs <- getFileStatus lf >>= return . fileSize
@@ -113,29 +114,25 @@ getNewActions env = do
                  then False
                  else True
 
-runAction env (Upload lf obj) = do
-  putStrLn $ " + Uploading: " ++ lf ++ " -> " ++ obj_bucket obj ++ ":" ++ obj_name obj
-  when (not $ dryRunMode env) $ do
-    fdata <- BL.readFile lf
-    sendObject (awsConnect env) (obj { obj_data = fdata })
-    return ()
-    
-runAction env (RemoteDelete obj) = do
-  putStrLn $ " - Deleting: " ++ obj_bucket obj ++ ":" ++ obj_name obj
-  when (not $ dryRunMode env) $ do
-    deleteObject (awsConnect env) obj
-    return ()
+    runAction (Upload lf obj) = do                                                    
+      putStrLn $ " + Uploading: " ++ lf ++ " -> " ++ obj_bucket obj ++ ":" ++ obj_name obj
+      when (not $ dryRunMode env) $ do                                                    
+        fdata <- BL.readFile lf                                                           
+        sendObject (awsConnect env) (obj { obj_data = fdata })                            
+        return ()                                                                         
+              
+    runAction (RemoteDelete obj) = do                                                 
+      putStrLn $ " - Deleting: " ++ obj_bucket obj ++ ":" ++ obj_name obj                 
+      when (not $ dryRunMode env) $ do                                                    
+        deleteObject (awsConnect env) obj                                                 
+        return ()                                                                         
+
+    runAction (Skip _) = return ()
 
 skips (Skip _) = True
 skips _ = False
 
 main = do
   env <- parseArgs 
-  debug env " = Calculating actions..."
-  new <- getNewActions env >>= return . filter (not . skips)
-  case new of
-    [] -> putStrLn " + No new changes."
-    _  -> do
-      mapM_ (runAction env) new
-      return ()
+  runNewActions env 
   putStrLn "Finished."
