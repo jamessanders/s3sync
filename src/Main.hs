@@ -1,6 +1,5 @@
 import ArgumentParser
 import Control.Monad
-import Data.Digest.Pure.MD5
 import Data.Foldable (foldlM)
 import Network.AWS.S3Bucket
 import Network.AWS.S3Object
@@ -12,8 +11,6 @@ import Types
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BL
 
-hashFileLazyBS p = BL.readFile p >>= return . md5
-               
 getNewActions env = do
   let lfs = localPaths env
   Right rfs <- getS3Files
