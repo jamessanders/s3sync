@@ -4,6 +4,7 @@ import ArgumentParser
 import Control.Monad
 import Data.Foldable (foldlM, foldrM)
 import Data.List (foldl')
+import Data.Maybe (isJust)
 import Network.AWS.S3Bucket
 import Network.AWS.S3Object
 import System.Directory
@@ -29,14 +30,15 @@ runNewActions env = do
   
   when (deleteMode env) $ do
     debug env " = Performing deletions..."
-    runDeletions expanded remoteFileList
+    runDeletions (makeLocalMap expanded) remoteFileList
 
   debug env " = Running updates..."
-  mapM_ (runNewUploads (makeMap remoteFileList)) expanded
+  mapM_ (runNewUploads (makeRemoteMap remoteFileList)) expanded
   return ()
   
   where
-    makeMap = foldl' (\a b -> M.insert (key b) b a) M.empty 
+    makeRemoteMap = foldl' (\a b -> M.insert (key b) b a) M.empty 
+    makeLocalMap  = foldl' (\a b@(_,rn) -> M.insert rn b a) M.empty
     expand path = do
       isFile <- isFile path
       case isFile of
@@ -67,20 +69,14 @@ runNewActions env = do
       return ((zip fileList remoteNames) : accum)
 
 
-    runNewUploads s3fs x = do
+    runNewUploads s3fs x = 
       findChanges s3fs x >>= runAction 
 
-    findInRemoteList lf rl = M.lookup lf rl
-
-    inLocalList [] _ = False
-    inLocalList ((_,rn):xs) s3f | rn == (key s3f) = True
-                                | otherwise = inLocalList xs s3f
-
-    runDeletions fl = do
-      mapM_ (runAction . makeRemoteDeletion . key) . filter (not . inLocalList fl) 
+    runDeletions fl = 
+      mapM_ (runAction . makeRemoteDeletion . key) . filter (not . isJust . (flip M.lookup) fl . key) 
                                         
     findChanges rfs (lf, rf) = do
-      case (rf `findInRemoteList` rfs) of
+      case (M.lookup rf rfs) of
         Nothing  -> (makeUpload lf rf)
         Just s3f -> do 
           dif <- compareMetaData lf s3f
