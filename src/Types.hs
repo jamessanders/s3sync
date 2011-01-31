@@ -39,5 +39,5 @@ data Arg = Arg String
 
 data Action = Skip FilePath
             | Upload FilePath S3Object
-            | Delete FilePath S3Object
+            | RemoteDelete S3Object
             deriving (Show)

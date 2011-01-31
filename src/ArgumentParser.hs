@@ -35,7 +35,7 @@ parseArgs' args = do
                  | (bucketName env == "") = return (Left "No bucket provided")
                  | (localPaths env == []) = return (Left "No local path provided")
                  | (archiveMode env == True) = return (Left "Archive mode not yet implemented")
-                 | (deleteMode env == True)  = return (Left "Delete mode not yet implemented")
+
     
     checkEnv env = do
       expandedPaths <- mapM canonicalizePath (localPaths env)
