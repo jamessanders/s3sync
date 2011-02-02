@@ -119,8 +119,7 @@ runNewActions env = do
         sendObject (awsConnect env) (obj { obj_data = fdata })                            
         return ()                                                                         
               
-    runAction (RemoteDelete obj) = do                                                 
-      putStrLn $ " - Deleting: " ++ obj_bucket obj ++ ":" ++ obj_name obj                 
+    runAction (RemoteDelete obj) = do                                                
       case (backupBucket env) of
         Just bucket -> do
           let path = fromMaybe "" (backupPath env)
@@ -133,6 +132,7 @@ runNewActions env = do
                 }
           putStrLn $ " + Copying: " ++ obj_bucket obj ++ ":" ++ obj_name obj ++ " -> " ++ obj_bucket cobj ++ ":" ++ obj_name cobj
           when (not $ dryRunMode env) (copyObject (awsConnect env) obj cobj >> return ())
+      putStrLn $ " - Deleting: " ++ obj_bucket obj ++ ":" ++ obj_name obj                 
       when (not $ dryRunMode env) $ do                                                    
         deleteObject (awsConnect env) obj                                                 
         return ()                                                                         
