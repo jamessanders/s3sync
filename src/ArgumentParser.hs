@@ -40,7 +40,8 @@ parseArgs' args = do
     checkEnv env = do
       expandedPaths <- mapM canonicalizePath (localPaths env)
       return (Right $ env {  
-                 remotePath = fixRemotePath (remotePath env)
+                 remotePath = fixRemotePath (remotePath env),
+                 backupPath = fmap fixRemotePath (backupPath env)
                  })
     fixRemotePath = 
       dropWhile (== '/') 
@@ -93,6 +94,7 @@ parseArgs' args = do
             Flag "access-key" -> accessKey
             Flag "dry-run"    -> dryRunMode
             Flag "rr-storage" -> reducedRedMode    
+            Flag "backup"     -> backupMode
             Arg x             -> getPaths x
             badArg            -> error $ "Invalid argument" ++ (show badArg)
           buildEnv env'
@@ -110,11 +112,21 @@ parseArgs' args = do
           case next of
             (Just x) -> return $ env { accessKey = x }
             _ -> error "Invalid argument for access-key"
+        
         secretKey = do
           next <- getNextArg
           case next of
             (Just x) -> return $ env { secretKey = x }
             _ -> error "Invalid argument for secret-key"
+        
+        backupMode = do
+          next <- getNextArg
+          case next of 
+            (Just x) -> return $ env { backupBucket = Just $ takeWhile (/=':') x,  
+                                       backupPath   = Just $ tail $ dropWhile (/=':') x
+                                     }
+            _ -> error "Invalid argument for backup"
+        
         getPaths x = do
           rest  <- getRest 
           let paths = ([x] ++ rest)

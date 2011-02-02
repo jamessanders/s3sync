@@ -4,7 +4,7 @@ import ArgumentParser
 import Control.Monad
 import Data.Foldable (foldlM, foldrM)
 import Data.List (foldl')
-import Data.Maybe (isJust)
+import Data.Maybe (isJust, fromMaybe)
 import Network.AWS.S3Bucket
 import Network.AWS.S3Object
 import System.Directory
@@ -12,6 +12,7 @@ import System.FilePath
 import System.FilePath.Find hiding (fileSize)
 import System.Posix.Files
 import Types
+import Data.DateTime
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.Map as M
@@ -27,14 +28,16 @@ runNewActions env = do
   remoteFileList <- concat `fmap` mapM getS3Files realRemoteDirs 
   debug env " = Examining local filesystem..."
   expanded <- concat `fmap` foldrM expandAll [] (localPaths env)
-  
-  when (deleteMode env) $ do
-    debug env " = Performing deletions..."
-    runDeletions (makeLocalMap expanded) remoteFileList
-
-  debug env " = Running updates..."
-  mapM_ (runNewUploads (makeRemoteMap remoteFileList)) expanded
-  return ()
+  if length expanded < 1 
+    then putStrLn "No local files found perhaps you meant to use -r" 
+    else do
+      when (deleteMode env) $ do                                   
+        debug env " = Performing deletions..."                     
+        runDeletions (makeLocalMap expanded) remoteFileList        
+                                                                   
+      debug env " = Running updates..."                            
+      mapM_ (runNewUploads (makeRemoteMap remoteFileList)) expanded
+      return ()                                                    
   
   where
     makeRemoteMap = foldl' (\a b -> M.insert (key b) b a) M.empty 
@@ -119,6 +122,19 @@ runNewActions env = do
               
     runAction (RemoteDelete obj) = do                                                 
       putStrLn $ " - Deleting: " ++ obj_bucket obj ++ ":" ++ obj_name obj                 
+      case (backupBucket env) of
+        Just bucket -> do
+          now <- getCurrentTime >>= return . toSeconds
+          let path = fromMaybe "" (backupPath env)
+          let cobj =  S3Object { 
+                obj_bucket   = bucket,
+                obj_name     = path </> show now </> obj_name obj,
+                content_type = "",
+                obj_headers  = [],
+                obj_data     = BL.empty
+                }
+          putStrLn $ " + Copying: " ++ obj_bucket obj ++ ":" ++ obj_name obj ++ " -> " ++ obj_bucket cobj ++ ":" ++ obj_name cobj
+          when (not $ dryRunMode env) (copyObject (awsConnect env) obj cobj >> return ())
       when (not $ dryRunMode env) $ do                                                    
         deleteObject (awsConnect env) obj                                                 
         return ()                                                                         

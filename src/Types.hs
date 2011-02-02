@@ -14,7 +14,9 @@ data S3SyncEnvironment = S3SyncEnvironment {
   deleteMode     :: Bool,
   verboseMode    :: Bool,
   dryRunMode     :: Bool,
-  reducedRedMode :: Bool
+  reducedRedMode :: Bool,
+  backupBucket   :: Maybe String,
+  backupPath     :: Maybe String
 } deriving (Show)
 
 blankEnv = S3SyncEnvironment {
@@ -28,7 +30,9 @@ blankEnv = S3SyncEnvironment {
   deleteMode     = False,
   verboseMode    = False,
   dryRunMode     = False,
-  reducedRedMode = False
+  reducedRedMode = False,
+  backupBucket   = Nothing,
+  backupPath     = Nothing
   }
 
 awsConnect env = amazonS3Connection (accessKey env) (secretKey env)
