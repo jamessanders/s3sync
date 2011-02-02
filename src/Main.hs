@@ -12,7 +12,6 @@ import System.FilePath
 import System.FilePath.Find hiding (fileSize)
 import System.Posix.Files
 import Types
-import Data.DateTime
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.Map as M
@@ -124,11 +123,10 @@ runNewActions env = do
       putStrLn $ " - Deleting: " ++ obj_bucket obj ++ ":" ++ obj_name obj                 
       case (backupBucket env) of
         Just bucket -> do
-          now <- getCurrentTime >>= return . toSeconds
           let path = fromMaybe "" (backupPath env)
           let cobj =  S3Object { 
                 obj_bucket   = bucket,
-                obj_name     = path </> show now </> obj_name obj,
+                obj_name     = path </> (backupTime env) </> obj_name obj,
                 content_type = "",
                 obj_headers  = [],
                 obj_data     = BL.empty

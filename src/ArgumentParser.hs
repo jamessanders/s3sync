@@ -5,6 +5,7 @@ import System.Directory
 import System.Environment
 import System.FilePath 
 import Types
+import Data.DateTime
 
 tail' (x:xs) = xs
 tail' []     = []
@@ -38,10 +39,12 @@ parseArgs' args = do
 
     
     checkEnv env = do
+      now <- getCurrentTime >>= return . toSeconds
       expandedPaths <- mapM canonicalizePath (localPaths env)
       return (Right $ env {  
                  remotePath = fixRemotePath (remotePath env),
-                 backupPath = fmap fixRemotePath (backupPath env)
+                 backupPath = fmap fixRemotePath (backupPath env),
+                 backupTime = show now
                  })
     fixRemotePath = 
       dropWhile (== '/') 
