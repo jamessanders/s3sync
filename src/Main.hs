@@ -185,5 +185,6 @@ runNewActions env = do
 
 main = do
   env <- parseArgs 
+  --print env
   runNewActions env 
   putStrLn "Finished."

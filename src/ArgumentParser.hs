@@ -91,8 +91,8 @@ parseArgs' args = do
           env' <- case next of
             Flag "a"          -> archiveMode
             Flag "r"          -> recursiveMode
-            Flag "delete"     -> deleteMode
             Flag "v"          -> verboseMode
+            Flag "delete"     -> deleteMode
             Flag "secret-key" -> secretKey
             Flag "access-key" -> accessKey
             Flag "dry-run"    -> dryRunMode
@@ -135,8 +135,9 @@ parseArgs' args = do
           let paths = ([x] ++ rest)
           let locals = init paths
           let remote = last paths
-          return $ env { localPaths = locals, 
-                         bucketName = takeWhile (/=':') remote, 
-                         remotePath = tail' $ dropWhile (/=':') remote
-                       }
+          return $ env { 
+            localPaths = locals, 
+            bucketName = takeWhile (/=':') remote, 
+            remotePath = tail' $ dropWhile (/=':') remote
+            }
         
