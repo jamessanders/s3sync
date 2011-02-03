@@ -49,3 +49,7 @@ data Action = Skip FilePath
             | RemoteCopy S3Object S3Object
             deriving (Show)
                      
+newtype FileMapping = FM (FilePath, FilePath) deriving (Show)
+localName  (FM (ln, _)) = ln
+remoteName (FM (_, rn)) = rn
+makeFileMapping a b = FM (a,b)

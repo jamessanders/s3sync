@@ -1,6 +1,8 @@
+{-# LANGUAGE OverlappingInstances #-}
 module Main where
 
 import ArgumentParser
+import Control.Applicative ((<$>))
 import Control.Monad
 import Data.Foldable (foldlM, foldrM)
 import Data.List (foldl')
@@ -12,6 +14,8 @@ import System.FilePath
 import System.FilePath.Find hiding (fileSize)
 import System.Posix.Files
 import Types
+import Utils
+import Data.Traversable (sequenceA)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.Map as M
@@ -19,94 +23,106 @@ import qualified Data.Map as M
 debug env st = when (verboseMode env) (putStrLn st)
 
 runNewActions env = do
-  debug env " = Getting remote listing..."
-  realRemoteDirs <- filterM (doesDirectoryExist) (localPaths env) 
-                    >>= return . map (\x-> if (last x == '/')
-                                             then (remotePath env)
-                                             else (remotePath env </> takeBaseName x))
-  remoteFileList <- concat `fmap` mapM getS3Files realRemoteDirs 
-  debug env " = Examining local filesystem..."
-  expanded <- concat `fmap` foldrM expandAll [] (localPaths env)
-  if length expanded < 1 
+  debug' " = Getting remote listing..."
+  Right remoteFileList <- getRemoteFileList
+  
+  debug' " = Examining local filesystem..."
+  localFileList <- getLocalFilesList
+  
+  if length localFileList < 1 
     then putStrLn "No local files found perhaps you meant to use -r" 
     else do
       when (deleteMode env) $ do                                   
-        debug env " = Performing deletions..."                     
-        runDeletions (makeLocalMap expanded) remoteFileList        
+        debug' " = Performing deletions..."                     
+        runDeletions (makeLocalMap localFileList) remoteFileList        
                                                                    
-      debug env " = Running updates..."                            
-      mapM_ (runNewUploads (makeRemoteMap remoteFileList)) expanded
+      debug' " = Running updates..."                            
+      runNewUploads (makeRemoteMap remoteFileList) localFileList
       return ()                                                    
   
   where
+        
+    debug' = debug env
+    
+    getRemoteFileList = do
+      remoteDirs <- getRemoteDirectoryNames
+      mapM getS3Files remoteDirs >>= return . fmap concat . sequenceA
+    
+    getRemoteDirectoryNames = do 
+      filterM (doesDirectoryExist) (localPaths env) 
+        >>= return . map determineRemoteDirectoryName
+    
+    determineRemoteDirectoryName path = 
+      if (last path == '/')
+        then (remotePath env)
+        else (remotePath env </> takeBaseName path)
+
+    getS3Files path = 
+      listAllObjects 
+        (awsConnect env) 
+        (bucketName env) 
+        (ListRequest path "" "" 1)
     
     makeRemoteMap = foldl' (\a b -> M.insert (key b) b a) M.empty 
     
-    makeLocalMap  = foldl' (\a b@(_,rn) -> M.insert rn b a) M.empty
+    makeLocalMap  = foldl' (\a b -> M.insert (remoteName b) b a) M.empty
+
+    getLocalFilesList = concat `fmap` foldrM expandAll [] (localPaths env)
     
-    expand path = do
-      isFile <- isFile path
-      case isFile of
-        True  -> return [path]
-        False -> expandDirectory path
+    expandAll parent accum = do
+      let newDir = if last parent == '/' then "" else takeBaseName parent
+      let makeRemoteName child = 
+            ifM (isFile parent)
+            (return (remotePath env </> takeFileName child))
+            (return (remotePath env </> newDir </> makeRelative parent child))
+      fileList    <- expandPath parent
+      remoteNames <- mapM makeRemoteName fileList 
+      return ((zipWith makeFileMapping fileList remoteNames) : accum)
+
+    expandPath path = do
+      ifM (isFile path) (return [path]) (expandDirectory path)
         
     expandDirectory path = do
-      find (return (recursiveMode env)) (fileType ==? RegularFile) path 
+      find (return $ recursiveMode env) (fileType ==? RegularFile) path 
       
     isFile path = do
       doesFileExist path
-        
-    getS3Files path = do
-      Right x <- listAllObjects 
-                 (awsConnect env) 
-                 (bucketName env) 
-                 (ListRequest path "" "" 1)
-      return x
-      
-    expandAll path accum = do
-      let newDir = if last path == '/' then "" else takeBaseName path
-      fileList <- expand path
-      remoteNames <- forM fileList (\x -> do 
-                                       isFile <- isFile path
-                                       if (isFile) 
-                                         then return ((remotePath env) </> takeFileName x)
-                                         else return ((remotePath env) </> newDir </> makeRelative path x)) 
-      return ((zip fileList remoteNames) : accum)
 
-
-    runNewUploads s3fs x = 
-      findChanges s3fs x >>= mapM_ runAction  
-
-    runDeletions fl rfl = 
-      let todel = filter (not 
-                            . isJust 
-                            . (flip M.lookup) fl 
-                            . key) rfl
-          makeAction x =
-            (if (isJust $  backupBucket env)
-               then [(makeRemoteCopy . key) x]
-               else []) ++ [(makeRemoteDeletion . key) x] 
+    runDeletions lookupMap remoteFiles = 
+      let 
+        todel = filter ((flip M.notMember) lookupMap . key) remoteFiles
+        makeAction path =
+          (if (isJust $  backupBucket env)
+             then [(makeRemoteCopy . key) path]
+             else []) ++ [(makeRemoteDeletion . key) path] 
             
       in mapM_ runAction (concatMap makeAction todel)
                                     
-    findChanges rfs (lf, rf) = do
-      case (M.lookup rf rfs) of
-        Nothing  -> sequence [makeUpload lf rf]
-        Just s3f -> do 
-          dif <- compareMetaData lf s3f
-          if dif 
-            then sequence $  
-            (if (isJust $ backupBucket env)
-               then [return $ makeRemoteCopy $ rf]
-               else []) ++  [makeUpload lf rf]
-            else return [Skip lf]
-            
-    compareMetaData lf s3f = do
-      fs <- getFileStatus lf >>= return . fileSize
-      return $ if (fromIntegral fs == size s3f) 
-                 then False
-                 else True
-
+    runNewUploads remoteLookupMap localFiles = 
+      forM_ localFiles $ \localFile -> do
+        changes <- findChanges localFile
+        forM_ changes runAction
+        where
+          
+        findChanges path = do                                                                               
+          case (M.lookup (remoteName path) remoteLookupMap) of                                              
+            Nothing  -> sequence [makeUpload path]                                                          
+            Just remoteFile -> do                                                                           
+              changed <- compareMetaData (localName path) remoteFile                                        
+              if changed                                                                                    
+                then uploadTheFile path                                                                     
+                else return [Skip $ localName path]                                                         
+                                                                                                            
+        compareMetaData localFile remoteFile = do                                                                         
+          fs <- fileSize <$> getFileStatus localFile 
+          return $ (fromIntegral fs /= size remoteFile)                                                         
+                                                                                                            
+        uploadTheFile fileMapping = do                                                                      
+          let backupAction = if isJust $ backupBucket env  
+                               then [return $ makeRemoteCopy (remoteName fileMapping)] 
+                               else []  
+          sequence $ backupAction ++ [makeUpload fileMapping]                                               
+                                                                                                            
     makeRemoteCopy rf = do       
       let path = fromMaybe "" (backupPath env)
           
@@ -128,13 +144,13 @@ runNewActions env = do
                  
         in RemoteCopy obj cobj
 
-    makeUpload lf rf = do
+    makeUpload fileMapping = do
       let sm = if (reducedRedMode env) 
                  then REDUCED_REDUNDANCY
                  else STANDARD
-      return $ Upload lf $ setStorageClass sm $ S3Object {
+      return $ Upload (localName fileMapping) $ setStorageClass sm $ S3Object {
         obj_bucket   = (bucketName env),
-        obj_name     = rf,
+        obj_name     = remoteName fileMapping,
         content_type = "",
         obj_headers  = [],
         obj_data     = BL.empty       
