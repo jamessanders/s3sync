@@ -39,8 +39,11 @@ runNewActions env = do
       return ()                                                    
   
   where
+    
     makeRemoteMap = foldl' (\a b -> M.insert (key b) b a) M.empty 
+    
     makeLocalMap  = foldl' (\a b@(_,rn) -> M.insert rn b a) M.empty
+    
     expand path = do
       isFile <- isFile path
       case isFile of
@@ -72,20 +75,59 @@ runNewActions env = do
 
 
     runNewUploads s3fs x = 
-      findChanges s3fs x >>= runAction 
+      findChanges s3fs x >>= mapM_ runAction  
 
-    runDeletions fl = 
-      mapM_ (runAction . makeRemoteDeletion . key) . filter (not . isJust . (flip M.lookup) fl . key) 
-                                        
+    runDeletions fl rfl = 
+      let todel = filter (not 
+                            . isJust 
+                            . (flip M.lookup) fl 
+                            . key) rfl
+          makeAction x =
+            (if (isJust $  backupBucket env)
+               then [(makeRemoteCopy . key) x]
+               else []) ++ [(makeRemoteDeletion . key) x] 
+            
+      in mapM_ runAction (concatMap makeAction todel)
+                                    
     findChanges rfs (lf, rf) = do
       case (M.lookup rf rfs) of
-        Nothing  -> (makeUpload lf rf)
+        Nothing  -> sequence [makeUpload lf rf]
         Just s3f -> do 
           dif <- compareMetaData lf s3f
           if dif 
-            then makeUpload lf rf
-            else return (Skip lf)          
+            then sequence $  
+            (if (isJust $ backupBucket env)
+               then [return $ makeRemoteCopy $ rf]
+               else []) ++  [makeUpload lf rf]
+            else return [Skip lf]
             
+    compareMetaData lf s3f = do
+      fs <- getFileStatus lf >>= return . fileSize
+      return $ if (fromIntegral fs == size s3f) 
+                 then False
+                 else True
+
+    makeRemoteCopy rf = do       
+      let path = fromMaybe "" (backupPath env)
+          
+          obj = S3Object { 
+            obj_bucket   = bucketName env,
+            obj_name     = rf,
+            content_type = "",
+            obj_headers  = [],
+            obj_data     = BL.empty
+            }
+      
+          cobj = S3Object { 
+            obj_bucket   = fromMaybe "" (backupBucket env),
+            obj_name     = path </> (backupTime env) </> rf,
+            content_type = "",
+            obj_headers  = [],
+            obj_data     = BL.empty
+            }
+                 
+        in RemoteCopy obj cobj
+
     makeUpload lf rf = do
       let sm = if (reducedRedMode env) 
                  then REDUCED_REDUNDANCY
@@ -106,12 +148,6 @@ runNewActions env = do
       obj_data     = BL.empty
       }
       
-    compareMetaData lf s3f = do
-      fs <- getFileStatus lf >>= return . fileSize
-      return $ if (fromIntegral fs == size s3f) 
-                 then False
-                 else True
-
     runAction (Upload lf obj) = do                                                    
       putStrLn $ " + Uploading: " ++ lf ++ " -> " ++ obj_bucket obj ++ ":" ++ obj_name obj
       when (not $ dryRunMode env) $ do                                                    
@@ -119,28 +155,17 @@ runNewActions env = do
         sendObject (awsConnect env) (obj { obj_data = fdata })                            
         return ()                                                                         
               
+    runAction (RemoteCopy obj cobj) = do
+      putStrLn $ " + Copying: " ++ obj_bucket obj ++ ":" ++ obj_name obj ++ " -> " ++ obj_bucket cobj ++ ":" ++ obj_name cobj
+      when (not $ dryRunMode env) (copyObject (awsConnect env) obj cobj >> return ())
+
     runAction (RemoteDelete obj) = do                                                
-      case (backupBucket env) of
-        Just bucket -> do
-          let path = fromMaybe "" (backupPath env)
-          let cobj =  S3Object { 
-                obj_bucket   = bucket,
-                obj_name     = path </> (backupTime env) </> obj_name obj,
-                content_type = "",
-                obj_headers  = [],
-                obj_data     = BL.empty
-                }
-          putStrLn $ " + Copying: " ++ obj_bucket obj ++ ":" ++ obj_name obj ++ " -> " ++ obj_bucket cobj ++ ":" ++ obj_name cobj
-          when (not $ dryRunMode env) (copyObject (awsConnect env) obj cobj >> return ())
       putStrLn $ " - Deleting: " ++ obj_bucket obj ++ ":" ++ obj_name obj                 
       when (not $ dryRunMode env) $ do                                                    
         deleteObject (awsConnect env) obj                                                 
         return ()                                                                         
 
     runAction (Skip _) = return ()
-
-skips (Skip _) = True
-skips _ = False
 
 main = do
   env <- parseArgs 
