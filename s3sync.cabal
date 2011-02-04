@@ -1,5 +1,5 @@
 Name:                s3sync
-Version:             0.1
+Version:             0.1.2
 Synopsis:            a simple tool similar to rsync for backing up files to S3
 Homepage:            https://github.com/jamessanders/s3sync
 License:             BSD3
