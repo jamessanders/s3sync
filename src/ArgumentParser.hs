@@ -6,9 +6,12 @@ import System.Environment
 import System.FilePath 
 import Types
 import Data.DateTime
+import Data.Maybe
+import Data.List
 
 tail' (x:xs) = xs
 tail' []     = []
+
 
 getConfig = do
   home <- getEnv "HOME"
@@ -31,23 +34,18 @@ parseArgs' args = do
     Left er -> error er
     Right x -> return x
   where
-    checkEnv env | (accessKey env == "")  = return (Left "No access key provided")
-                 | (secretKey env == "")  = return (Left "No secret key provided")
-                 | (bucketName env == "") = return (Left "No bucket provided")
-                 | (localPaths env == []) = return (Left "No local path provided")
-                 | (archiveMode env == True) = return (Left "Archive mode not yet implemented")
+    checkEnv env | (accessKey env == "")                  = return (Left "No access key provided")
+                 | (secretKey env == "")                  = return (Left "No secret key provided")
+                 | (sourceResources env == [])            = return (Left "No source provided")
+                 | (getBucket (targetResource env) == "") = return (Left "No local path provided")
+                 | (archiveMode env == True)              = return (Left "Archive mode not yet implemented")
 
     
     checkEnv env = do
       now <- getCurrentTime >>= return . toSeconds
-      expandedPaths <- mapM canonicalizePath (localPaths env)
       return (Right $ env {  
-                 remotePath = fixRemotePath (remotePath env),
-                 backupPath = fmap fixRemotePath (backupPath env),
                  backupTime = show now
                  })
-    fixRemotePath = 
-      dropWhile (== '/') 
     ------------------------------------------------------------------------
     
     getNextArg = do
@@ -125,19 +123,21 @@ parseArgs' args = do
         backupMode = do
           next <- getNextArg
           case next of 
-            (Just x) -> return $ env { backupBucket = Just $ takeWhile (/=':') x,  
-                                       backupPath   = Just $ tail $ dropWhile (/=':') x
-                                     }
+            (Just x) -> return $ env { backupResource = Just $ makeResource x }
             _ -> error "Invalid argument for backup"
         
         getPaths x = do
           rest  <- getRest 
           let paths = ([x] ++ rest)
-          let locals = init paths
-          let remote = last paths
+          let source = map makeResource $ init paths
+          let target = makeResource $ last paths
           return $ env { 
-            localPaths = locals, 
-            bucketName = takeWhile (/=':') remote, 
-            remotePath = tail' $ dropWhile (/=':') remote
+            sourceResources = source,
+            targetResource  = target
             }
         
+makeResource str | ":" `isInfixOf` str = 
+  RemoteResource (takeWhile (/= ':') str) (fixRemotePath $ tail $ dropWhile (/= ':') str)
+                 | otherwise           = LocalResource str
+                                         
+    where fixRemotePath = dropWhile (== '/') 

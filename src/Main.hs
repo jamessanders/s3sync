@@ -44,37 +44,41 @@ runNewActions env = do
         
     debug' = debug env
     
+    targetBucket = getBucket $ targetResource env
+    targetPath   = getPath   $ targetResource env
+    
     getRemoteFileList = do
       remoteDirs <- getRemoteDirectoryNames
       mapM getS3Files remoteDirs >>= return . fmap concat . sequenceA
     
     getRemoteDirectoryNames = do 
-      filterM (doesDirectoryExist) (localPaths env) 
+      filterM (doesDirectoryExist . getPath) (sourceResources env) 
         >>= return . map determineRemoteDirectoryName
     
-    determineRemoteDirectoryName path = 
-      if (last path == '/')
-        then (remotePath env)
-        else (remotePath env </> takeBaseName path)
+    determineRemoteDirectoryName resource = 
+      let path = getPath resource
+      in if (last path == '/')
+           then (targetPath)
+           else (targetPath </> takeBaseName path)
 
     getS3Files path = 
       listAllObjects 
         (awsConnect env) 
-        (bucketName env) 
+        (targetBucket) 
         (ListRequest path "" "" 1)
     
     makeRemoteMap = foldl' (\a b -> M.insert (key b) b a) M.empty 
     
     makeLocalMap  = foldl' (\a b -> M.insert (remoteName b) b a) M.empty
 
-    getLocalFilesList = concat `fmap` foldrM expandAll [] (localPaths env)
+    getLocalFilesList = concat `fmap` foldrM expandAll [] (map getPath $ sourceResources env)
     
     expandAll parent accum = do
       let newDir = if last parent == '/' then "" else takeBaseName parent
       let makeRemoteName child = 
             ifM (isFile parent)
-            (return (remotePath env </> takeFileName child))
-            (return (remotePath env </> newDir </> makeRelative parent child))
+            (return (targetPath </> takeFileName child))
+            (return (targetPath </> newDir </> makeRelative parent child))
       fileList    <- expandPath parent
       remoteNames <- mapM makeRemoteName fileList 
       return ((zipWith makeFileMapping fileList remoteNames) : accum)
@@ -92,7 +96,7 @@ runNewActions env = do
       let 
         todel = filter ((flip M.notMember) lookupMap . key) remoteFiles
         makeAction path =
-          (if (isJust $  backupBucket env)
+          (if (isJust $ backupResource env)
              then [(makeRemoteCopy . key) path]
              else []) ++ [(makeRemoteDeletion . key) path] 
             
@@ -118,16 +122,15 @@ runNewActions env = do
           return $ (fromIntegral fs /= size remoteFile)                                                         
                                                                                                             
         uploadTheFile fileMapping = do                                                                      
-          let backupAction = if isJust $ backupBucket env  
+          let backupAction = if isJust $ backupResource env
                                then [return $ makeRemoteCopy (remoteName fileMapping)] 
                                else []  
           sequence $ backupAction ++ [makeUpload fileMapping]                                               
                                                                                                             
     makeRemoteCopy rf = do       
-      let path = fromMaybe "" (backupPath env)
-          
+      let Just backupResource' = backupResource env
           obj = S3Object { 
-            obj_bucket   = bucketName env,
+            obj_bucket   = targetBucket,
             obj_name     = rf,
             content_type = "",
             obj_headers  = [],
@@ -135,13 +138,12 @@ runNewActions env = do
             }
       
           cobj = S3Object { 
-            obj_bucket   = fromMaybe "" (backupBucket env),
-            obj_name     = path </> (backupTime env) </> rf,
+            obj_bucket   = getBucket backupResource',
+            obj_name     = getPath backupResource' </> (backupTime env) </> rf,
             content_type = "",
             obj_headers  = [],
             obj_data     = BL.empty
-            }
-                 
+            }                 
         in RemoteCopy obj cobj
 
     makeUpload fileMapping = do
@@ -149,7 +151,7 @@ runNewActions env = do
                  then REDUCED_REDUNDANCY
                  else STANDARD
       return $ Upload (localName fileMapping) $ setStorageClass sm $ S3Object {
-        obj_bucket   = (bucketName env),
+        obj_bucket   = targetBucket,
         obj_name     = remoteName fileMapping,
         content_type = "",
         obj_headers  = [],
@@ -157,7 +159,7 @@ runNewActions env = do
         }
           
     makeRemoteDeletion s3f = RemoteDelete $ S3Object { 
-      obj_bucket   = bucketName env,
+      obj_bucket   = targetBucket,
       obj_name     = s3f,
       content_type = "",
       obj_headers  = [],
