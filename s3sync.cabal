@@ -14,7 +14,7 @@ Cabal-version:       >=1.2
 Executable s3sync
   Main-is: Main.hs             
   hs-source-dirs: src
-  Build-depends: base >= 4, 
+  Build-depends: base, 
                  bytestring >= 0.9.1.5, 
                  hxt <= 8.5.4,
                  hS3 >= 0.5.3, 
@@ -24,7 +24,7 @@ Executable s3sync
                  directory >= 1.0.1.0,
                  mtl >= 1.1.0.2,
                  containers >= 0.3.0.0,
-                 datetime
+                 time
 
   ghc-options: -O2 -threaded
 

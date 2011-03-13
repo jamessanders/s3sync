@@ -23,12 +23,16 @@ import qualified Data.Map as M
 debug env st = when (verboseMode env) (putStrLn st)
 
 runNewActions env = do
+  
+  mapM expandResource (sourceResources env) >>= print . concat
+  
   debug' " = Getting remote listing..."
   Right remoteFileList <- getRemoteFileList
   
   debug' " = Examining local filesystem..."
   localFileList <- getLocalFilesList
-  
+  return ()
+  {-
   if length localFileList < 1 
     then putStrLn "No local files found perhaps you meant to use -r" 
     else do
@@ -39,9 +43,15 @@ runNewActions env = do
       debug' " = Running updates..."                            
       runNewUploads (makeRemoteMap remoteFileList) localFileList
       return ()                                                    
-  
+  -}
   where
         
+    expandResource :: Resource -> IO [Resource]
+    expandResource (LocalResource path) = 
+      ifM (isFile path)
+        (return [LocalResource path])
+        (map LocalResource <$> expandDirectory path)
+    
     debug' = debug env
     
     targetBucket = getBucket $ targetResource env
@@ -86,6 +96,7 @@ runNewActions env = do
     expandPath path = do
       ifM (isFile path) (return [path]) (expandDirectory path)
         
+    expandDirectory :: FilePath -> IO [FilePath]
     expandDirectory path = do
       find (return $ recursiveMode env) (fileType ==? RegularFile) path 
       

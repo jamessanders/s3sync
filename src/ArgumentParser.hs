@@ -5,7 +5,8 @@ import System.Directory
 import System.Environment
 import System.FilePath 
 import Types
-import Data.DateTime
+import Data.Time.Clock
+import Data.Time.Clock.POSIX
 import Data.Maybe
 import Data.List
 
@@ -42,7 +43,7 @@ parseArgs' args = do
 
     
     checkEnv env = do
-      now <- getCurrentTime >>= return . toSeconds
+      now <- getCurrentTime >>= return . utcTimeToPOSIXSeconds
       return (Right $ env {  
                  backupTime = show now
                  })
