@@ -32,7 +32,6 @@ runNewActions env = do
   debug' " = Examining local filesystem..."
   localFileList <- getLocalFilesList
   return ()
-  {-
   if length localFileList < 1 
     then putStrLn "No local files found perhaps you meant to use -r" 
     else do
@@ -43,7 +42,6 @@ runNewActions env = do
       debug' " = Running updates..."                            
       runNewUploads (makeRemoteMap remoteFileList) localFileList
       return ()                                                    
-  -}
   where
         
     expandResource :: Resource -> IO [Resource]
